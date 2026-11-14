@@ -3,8 +3,14 @@
  * Bei einem Klingeln erscheint das Kamerabild im Vollbild.
  */
 
-const HISTORY_DAYS = 10;
+const HISTORY_DAYS = 365;
 const MAX_ENTRIES = 5;
+const PERIODS = [
+  { key: "day", label: "1 Tag", days: 1 },
+  { key: "week", label: "1 Woche", days: 7 },
+  { key: "month", label: "1 Monat", days: 30 },
+  { key: "year", label: "1 Jahr", days: 365 },
+];
 const INVALID = ["unavailable", "unknown", "", null, undefined];
 
 const LABELS = {
@@ -42,6 +48,8 @@ class DoorbellCameraCard extends HTMLElement {
     this._overlay = null;
     this._overlayTimer = null;
     this._tick = null;
+    this._showAll = false;
+    this._period = "day";
   }
 
   setConfig(config) {
@@ -224,13 +232,43 @@ class DoorbellCameraCard extends HTMLElement {
         minute: "2-digit",
         second: "2-digit",
       });
+      const toRows = (list) =>
+        list.map((ts) => `<li>${this._esc(fmt.format(new Date(ts)))} Uhr</li>`).join("");
       const rows = last.length
-        ? last.map((ts) => `<li>${this._esc(fmt.format(new Date(ts)))} Uhr</li>`).join("")
+        ? toRows(last)
         : `<li class="hint">Noch kein Klingeln aufgezeichnet.</li>`;
+
+      let more = "";
+      if (this._presses.length > MAX_ENTRIES) {
+        more = `<button class="btn more" data-action="toggle">${
+          this._showAll ? "Alle ausblenden" : "Alle anzeigen"
+        }</button>`;
+        if (this._showAll) {
+          const period = PERIODS.find((p) => p.key === this._period) || PERIODS[0];
+          const from = Date.now() - period.days * 86400000;
+          const inPeriod = this._presses.filter((ts) => ts >= from).reverse();
+          const tabs = PERIODS.map(
+            (p) =>
+              `<button class="btn tab${p.key === period.key ? " active" : ""}" data-period="${
+                p.key
+              }">${p.label}</button>`
+          ).join("");
+          more += `
+            <div class="tabs">${tabs}</div>
+            <div class="sub">${inPeriod.length} mal geklingelt (${period.label})</div>
+            <ul class="all">${
+              inPeriod.length
+                ? toRows(inPeriod)
+                : `<li class="hint">Kein Klingeln in diesem Zeitraum.</li>`
+            }</ul>`;
+        }
+      }
+
       body = `
         <div class="count"><span>${today}</span> mal heute geklingelt</div>
         <div class="sub">Letzte ${MAX_ENTRIES} Klingelzeiten</div>
-        <ul>${rows}</ul>`;
+        <ul>${rows}</ul>
+        ${more}`;
     }
 
     const title = "Doorbell Camera Card by Lutarym";
@@ -245,9 +283,28 @@ class DoorbellCameraCard extends HTMLElement {
           .tk li { padding: 6px 0; border-bottom: 1px solid var(--divider-color); }
           .tk li:last-child { border-bottom: none; }
           .tk .hint { color: var(--secondary-text-color); }
+          .tk .btn { font: inherit; cursor: pointer; border-radius: 16px; padding: 6px 14px;
+            border: 1px solid var(--primary-color); background: none; color: var(--primary-color); }
+          .tk .btn.more { margin-top: 12px; width: 100%; }
+          .tk .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+          .tk .btn.tab.active { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+          .tk ul.all { max-height: 300px; overflow-y: auto; }
         </style>
         <div class="tk">${body}</div>
       </ha-card>`;
+
+    this.querySelectorAll("[data-action='toggle']").forEach((el) =>
+      el.addEventListener("click", () => {
+        this._showAll = !this._showAll;
+        this._render();
+      })
+    );
+    this.querySelectorAll("[data-period]").forEach((el) =>
+      el.addEventListener("click", () => {
+        this._period = el.dataset.period;
+        this._render();
+      })
+    );
   }
 
   getCardSize() {
