@@ -7,7 +7,7 @@ A Lovelace card for Home Assistant that counts doorbell presses and shows a came
 - Shows how many times the doorbell was pressed today
 - Lists the last 5 presses with date and time
 - Counts only the press, not the release
-- Button to show all presses of the last day, week, month or year (appears after more than 5 presses)
+- History button opens a popup with all presses of the last day, week, month or year (appears after more than 5 presses)
 - Opens the camera image in fullscreen when the doorbell rings
 - Display duration of the camera image is configurable
 - Click on the camera image to close it

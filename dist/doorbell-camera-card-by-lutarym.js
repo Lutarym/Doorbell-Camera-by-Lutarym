@@ -48,7 +48,8 @@ class DoorbellCameraCard extends HTMLElement {
     this._overlay = null;
     this._overlayTimer = null;
     this._tick = null;
-    this._showAll = false;
+    this._log = null;
+    this._escHandler = null;
     this._period = "day";
   }
 
@@ -73,6 +74,7 @@ class DoorbellCameraCard extends HTMLElement {
   disconnectedCallback() {
     clearInterval(this._tick);
     this._closeOverlay();
+    this._closeLog();
   }
 
   set hass(hass) {
@@ -208,11 +210,34 @@ class DoorbellCameraCard extends HTMLElement {
     return String(text).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
   }
 
+  _fmt(ts, withWeekday) {
+    const d = new Date(ts);
+    const date = new Intl.DateTimeFormat("de-DE", {
+      weekday: withWeekday ? "short" : undefined,
+      day: "2-digit",
+      month: "2-digit",
+      year: "2-digit",
+    }).format(d);
+    const time = new Intl.DateTimeFormat("de-DE", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).format(d);
+    return { date, time };
+  }
+
+  _row(ts) {
+    const f = this._fmt(ts, true);
+    return `<li><span>${this._esc(f.date)}</span><span>${this._esc(f.time)}</span></li>`;
+  }
+
   _render() {
     if (!this._config) return;
     const id = this._config.entity;
     const st = id && this._hass ? this._hass.states[id] : undefined;
+    const title = "Doorbell Camera Card by Lutarym";
 
+    let today = 0;
     let body;
     if (!id) {
       body = `<div class="hint">Bitte eine Klingel Entität auswählen.</div>`;
@@ -221,94 +246,136 @@ class DoorbellCameraCard extends HTMLElement {
     } else {
       const midnight = new Date();
       midnight.setHours(0, 0, 0, 0);
-      const today = this._presses.filter((ts) => ts >= midnight.getTime()).length;
+      today = this._presses.filter((ts) => ts >= midnight.getTime()).length;
       const last = this._presses.slice(-MAX_ENTRIES).reverse();
-      const fmt = new Intl.DateTimeFormat("de-DE", {
-        weekday: "short",
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      });
-      const toRows = (list) =>
-        list.map((ts) => `<li>${this._esc(fmt.format(new Date(ts)))} Uhr</li>`).join("");
-      const rows = last.length
-        ? toRows(last)
-        : `<li class="hint">Noch kein Klingeln aufgezeichnet.</li>`;
-
-      let more = "";
-      if (this._presses.length > MAX_ENTRIES) {
-        more = `<button class="btn more" data-action="toggle">${
-          this._showAll ? "Alle ausblenden" : "Alle anzeigen"
-        }</button>`;
-        if (this._showAll) {
-          const period = PERIODS.find((p) => p.key === this._period) || PERIODS[0];
-          const from = Date.now() - period.days * 86400000;
-          const inPeriod = this._presses.filter((ts) => ts >= from).reverse();
-          const tabs = PERIODS.map(
-            (p) =>
-              `<button class="btn tab${p.key === period.key ? " active" : ""}" data-period="${
-                p.key
-              }">${p.label}</button>`
-          ).join("");
-          more += `
-            <div class="tabs">${tabs}</div>
-            <div class="sub">${inPeriod.length} mal geklingelt (${period.label})</div>
-            <ul class="all">${
-              inPeriod.length
-                ? toRows(inPeriod)
-                : `<li class="hint">Kein Klingeln in diesem Zeitraum.</li>`
-            }</ul>`;
-        }
-      }
-
-      body = `
-        <div class="count"><span>${today}</span> mal heute geklingelt</div>
-        <div class="sub">Letzte ${MAX_ENTRIES} Klingelzeiten</div>
-        <ul>${rows}</ul>
-        ${more}`;
+      body = last.length
+        ? `<ul>${last.map((ts) => this._row(ts)).join("")}</ul>`
+        : `<div class="hint">Noch kein Klingeln aufgezeichnet.</div>`;
     }
 
-    const title = "Doorbell Camera Card by Lutarym";
+    const logBtn =
+      this._presses.length > MAX_ENTRIES
+        ? `<button class="log" data-action="log" title="Protokoll"><ha-icon icon="mdi:history"></ha-icon></button>`
+        : "";
+
     this.innerHTML = `
-      <ha-card header="${this._esc(title)}">
+      <ha-card>
         <style>
-          .tk { padding: 0 16px 16px; }
-          .tk .count { font-size: 1.1em; }
-          .tk .count span { font-size: 2em; font-weight: 500; margin-right: 6px; }
-          .tk .sub { margin-top: 12px; color: var(--secondary-text-color); }
-          .tk ul { list-style: none; margin: 6px 0 0; padding: 0; }
-          .tk li { padding: 6px 0; border-bottom: 1px solid var(--divider-color); }
-          .tk li:last-child { border-bottom: none; }
-          .tk .hint { color: var(--secondary-text-color); }
-          .tk .btn { font: inherit; cursor: pointer; border-radius: 16px; padding: 6px 14px;
-            border: 1px solid var(--primary-color); background: none; color: var(--primary-color); }
-          .tk .btn.more { margin-top: 12px; width: 100%; }
-          .tk .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
-          .tk .btn.tab.active { background: var(--primary-color); color: var(--text-primary-color, #fff); }
-          .tk ul.all { max-height: 300px; overflow-y: auto; }
+          .dc { padding: 10px 12px; font-size: 0.9em; }
+          .dc .head { display: flex; align-items: center; gap: 8px; }
+          .dc .head ha-icon { --mdc-icon-size: 20px; color: var(--primary-color); }
+          .dc .title { flex: 1; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+          .dc .badge { background: var(--primary-color); color: var(--text-primary-color, #fff);
+            border-radius: 10px; padding: 1px 8px; font-size: 0.85em; white-space: nowrap; }
+          .dc .log { background: none; border: none; padding: 2px; cursor: pointer; line-height: 0; }
+          .dc ul { list-style: none; margin: 6px 0 0; padding: 0; }
+          .dc li { display: flex; justify-content: space-between; padding: 2px 0;
+            border-bottom: 1px solid var(--divider-color); }
+          .dc li:last-child { border-bottom: none; }
+          .dc .hint { margin-top: 6px; color: var(--secondary-text-color); }
         </style>
-        <div class="tk">${body}</div>
+        <div class="dc">
+          <div class="head">
+            <ha-icon icon="mdi:doorbell"></ha-icon>
+            <span class="title">${this._esc(title)}</span>
+            <span class="badge">${today} heute</span>
+            ${logBtn}
+          </div>
+          ${body}
+        </div>
       </ha-card>`;
 
-    this.querySelectorAll("[data-action='toggle']").forEach((el) =>
-      el.addEventListener("click", () => {
-        this._showAll = !this._showAll;
-        this._render();
-      })
-    );
-    this.querySelectorAll("[data-period]").forEach((el) =>
+    const btn = this.querySelector("[data-action='log']");
+    if (btn) btn.addEventListener("click", () => this._openLog());
+    if (this._log) this._renderLog();
+  }
+
+  _openLog() {
+    this._closeLog();
+    const log = document.createElement("div");
+    log.style.cssText =
+      "position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.5);" +
+      "display:flex;align-items:center;justify-content:center;";
+    log.addEventListener("click", (e) => {
+      if (e.target === log) this._closeLog();
+    });
+    this._escHandler = (e) => {
+      if (e.key === "Escape") this._closeLog();
+    };
+    document.addEventListener("keydown", this._escHandler);
+    document.body.appendChild(log);
+    this._log = log;
+    this._renderLog();
+  }
+
+  _renderLog() {
+    if (!this._log) return;
+    const period = PERIODS.find((p) => p.key === this._period) || PERIODS[0];
+    const from = Date.now() - period.days * 86400000;
+    const list = this._presses.filter((ts) => ts >= from).reverse();
+    const tabs = PERIODS.map(
+      (p) =>
+        `<button class="tab${p.key === period.key ? " active" : ""}" data-period="${p.key}">${p.label}</button>`
+    ).join("");
+    const scroll = this._log.querySelector("ul");
+    const scrollTop = scroll ? scroll.scrollTop : 0;
+
+    this._log.innerHTML = `
+      <style>
+        .dcl { background: var(--card-background-color, #fff); color: var(--primary-text-color, #000);
+          border-radius: 12px; width: min(420px, 92vw); max-height: 80vh; display: flex;
+          flex-direction: column; padding: 12px 14px; font-family: var(--paper-font-body1_-_font-family, inherit);
+          box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
+        .dcl .top { display: flex; align-items: center; }
+        .dcl .top b { flex: 1; }
+        .dcl .x { background: none; border: none; font-size: 1.4em; cursor: pointer; color: inherit; line-height: 1; }
+        .dcl .tabs { display: flex; gap: 6px; margin: 10px 0 6px; flex-wrap: wrap; }
+        .dcl .tab { font: inherit; font-size: 0.9em; cursor: pointer; border-radius: 14px; padding: 4px 12px;
+          border: 1px solid var(--primary-color, #03a9f4); background: none; color: var(--primary-color, #03a9f4); }
+        .dcl .tab.active { background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
+        .dcl .sum { color: var(--secondary-text-color, #666); font-size: 0.9em; margin-bottom: 4px; }
+        .dcl ul { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
+        .dcl li { display: flex; justify-content: space-between; padding: 4px 0;
+          border-bottom: 1px solid var(--divider-color, #ddd); font-size: 0.9em; }
+        .dcl li:last-child { border-bottom: none; }
+      </style>
+      <div class="dcl">
+        <div class="top"><b>Klingelprotokoll</b><button class="x" data-action="close" title="Schließen">&times;</button></div>
+        <div class="tabs">${tabs}</div>
+        <div class="sum">${list.length} mal geklingelt (${period.label})</div>
+        <ul>${
+          list.length
+            ? list.map((ts) => this._row(ts)).join("")
+            : `<li><span>Kein Klingeln in diesem Zeitraum.</span></li>`
+        }</ul>
+      </div>`;
+
+    const ul = this._log.querySelector("ul");
+    if (ul) ul.scrollTop = scrollTop;
+    this._log.querySelector("[data-action='close']").addEventListener("click", () => this._closeLog());
+    this._log.querySelectorAll("[data-period]").forEach((el) =>
       el.addEventListener("click", () => {
         this._period = el.dataset.period;
-        this._render();
+        const u = this._log.querySelector("ul");
+        if (u) u.scrollTop = 0;
+        this._renderLog();
       })
     );
   }
 
+  _closeLog() {
+    if (this._escHandler) {
+      document.removeEventListener("keydown", this._escHandler);
+      this._escHandler = null;
+    }
+    if (this._log) {
+      this._log.remove();
+      this._log = null;
+    }
+  }
+
   getCardSize() {
-    return 4;
+    return 3;
   }
 }
 
