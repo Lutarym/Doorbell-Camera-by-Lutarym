@@ -285,12 +285,12 @@ class DoorbellCameraCard extends HTMLElement {
       today = this._presses.filter((ts) => ts >= midnight.getTime()).length;
       const last = this._presses.slice(-MAX_ENTRIES).reverse();
       body = last.length
-        ? `<ul>${last.map((ts) => this._row(ts)).join("")}</ul>`
+        ? `<ul class="open" title="Protokoll öffnen">${last.map((ts) => this._row(ts)).join("")}</ul>`
         : `<div class="hint">Noch kein Klingeln aufgezeichnet.</div>`;
     }
 
     const logBtn =
-      this._presses.length > MAX_ENTRIES
+      this._presses.length > 0
         ? `<button class="log" data-action="log" title="Protokoll"><ha-icon icon="mdi:history"></ha-icon></button>`
         : "";
 
@@ -303,7 +303,9 @@ class DoorbellCameraCard extends HTMLElement {
           .dc .title { flex: 1; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
           .dc .badge { background: var(--primary-color); color: var(--text-primary-color, #fff);
             border-radius: 10px; padding: 1px 8px; font-size: 0.85em; white-space: nowrap; }
-          .dc .log { background: none; border: none; padding: 2px; cursor: pointer; line-height: 0; }
+          .dc .log { background: none; border: none; padding: 4px; cursor: pointer; line-height: 0;
+            color: var(--primary-color); }
+          .dc ul.open { cursor: pointer; }
           .dc ul { list-style: none; margin: 6px 0 0; padding: 0; }
           .dc li { display: flex; align-items: center; gap: 8px; padding: 2px 0;
             border-bottom: 1px solid var(--divider-color); }
@@ -326,9 +328,18 @@ class DoorbellCameraCard extends HTMLElement {
       </ha-card>`;
 
     const btn = this.querySelector("[data-action='log']");
-    if (btn) btn.addEventListener("click", () => this._openLog());
+    if (btn)
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._openLog();
+      });
+    const list = this.querySelector("ul.open");
+    if (list) list.addEventListener("click", () => this._openLog());
     this.querySelectorAll("[data-img]").forEach((el) =>
-      el.addEventListener("click", () => this._openLog(Number(el.dataset.img)))
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._openLog(Number(el.dataset.img));
+      })
     );
     if (this._log) this._renderLog();
   }
