@@ -1,6 +1,8 @@
 /* Doorbell Camera Card by Lutarym für Home Assistant
  * Zeigt, wie oft heute geklingelt wurde, und die letzten 5 Klingelzeiten.
  * Bei einem Klingeln erscheint das Kamerabild im Vollbild.
+ * Mit der Integration "Event Snapshot Recorder by Lutarym" werden zusätzlich
+ * Kamerabilder gespeichert und im Protokoll angezeigt.
  */
 
 const HISTORY_DAYS = 365;
@@ -13,7 +15,11 @@ const PERIODS = [
 ];
 const INVALID = ["unavailable", "unknown", "", null, undefined];
 
+const DEFAULT_NAME = "Doorbell Camera Card by Lutarym";
+const WS_TYPE = "lutarym_event_snapshot_recorder/presses";
+
 const LABELS = {
+  name: "Name der Karte",
   entity: "Klingel Entität",
   camera_entity: "Kamera Entität",
   duration: "Anzeigedauer Kamerabild (Sekunden)",
@@ -23,6 +29,7 @@ class DoorbellCameraCard extends HTMLElement {
   static getConfigForm() {
     return {
       schema: [
+        { name: "name", selector: { text: {} } },
         { name: "entity", required: true, selector: { entity: {} } },
         { name: "camera_entity", selector: { entity: { domain: "camera" } } },
         {
@@ -35,7 +42,7 @@ class DoorbellCameraCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { entity: "", camera_entity: "", duration: 30 };
+    return { name: DEFAULT_NAME, entity: "", camera_entity: "", duration: 30 };
   }
 
   constructor() {
@@ -51,6 +58,9 @@ class DoorbellCameraCard extends HTMLElement {
     this._log = null;
     this._escHandler = null;
     this._period = "day";
+    this._images = new Set();
+    this._entryId = null;
+    this._viewImage = null;
   }
 
   setConfig(config) {
@@ -58,6 +68,8 @@ class DoorbellCameraCard extends HTMLElement {
     this._config = { duration: 30, ...config };
     if (entityChanged) {
       this._presses = [];
+      this._images = new Set();
+      this._entryId = null;
       this._loadedFor = null;
       this._prevState = undefined;
       this._lastValid = undefined;
@@ -116,10 +128,30 @@ class DoorbellCameraCard extends HTMLElement {
       const ts = new Date(st.last_changed).getTime() || Date.now();
       this._addPresses([ts]);
       this._showCamera();
+      if (this._entryId) {
+        // Bild wird von der Integration gespeichert, danach Protokoll neu laden
+        setTimeout(() => this._loadIntegration(id), 4000);
+        setTimeout(() => this._loadIntegration(id), 15000);
+      }
+    }
+  }
+
+  async _loadIntegration(id) {
+    try {
+      const res = await this._hass.callWS({ type: WS_TYPE, entity_id: id });
+      if (this._config.entity !== id) return true;
+      this._entryId = res.entry_id;
+      this._images = new Set(res.presses.filter((p) => p.image).map((p) => p.ts));
+      this._addPresses(res.presses.map((p) => p.ts));
+      return true;
+    } catch (err) {
+      return false;
     }
   }
 
   async _loadHistory(id) {
+    // Mit installierter Integration kommen Protokoll und Bilder von dort
+    if (await this._loadIntegration(id)) return;
     try {
       const start = new Date(Date.now() - HISTORY_DAYS * 86400000);
       const res = await this._hass.callWS({
@@ -228,14 +260,17 @@ class DoorbellCameraCard extends HTMLElement {
 
   _row(ts) {
     const f = this._fmt(ts, true);
-    return `<li><span>${this._esc(f.date)}</span><span>${this._esc(f.time)}</span></li>`;
+    const cam = this._images.has(ts)
+      ? `<button class="cam" data-img="${ts}" title="Bild anzeigen"><ha-icon icon="mdi:camera"></ha-icon></button>`
+      : `<span class="cam"></span>`;
+    return `<li><span class="d">${this._esc(f.date)}</span><span class="t">${this._esc(f.time)}</span>${cam}</li>`;
   }
 
   _render() {
     if (!this._config) return;
     const id = this._config.entity;
     const st = id && this._hass ? this._hass.states[id] : undefined;
-    const title = "Doorbell Camera Card by Lutarym";
+    const title = this._config.name || DEFAULT_NAME;
 
     let today = 0;
     let body;
@@ -269,8 +304,12 @@ class DoorbellCameraCard extends HTMLElement {
             border-radius: 10px; padding: 1px 8px; font-size: 0.85em; white-space: nowrap; }
           .dc .log { background: none; border: none; padding: 2px; cursor: pointer; line-height: 0; }
           .dc ul { list-style: none; margin: 6px 0 0; padding: 0; }
-          .dc li { display: flex; justify-content: space-between; padding: 2px 0;
+          .dc li { display: flex; align-items: center; gap: 8px; padding: 2px 0;
             border-bottom: 1px solid var(--divider-color); }
+          .dc li .d { flex: 1; }
+          .dc .cam { width: 22px; height: 22px; background: none; border: none; padding: 0;
+            cursor: pointer; line-height: 0; color: var(--primary-color); }
+          .dc .cam ha-icon { --mdc-icon-size: 18px; }
           .dc li:last-child { border-bottom: none; }
           .dc .hint { margin-top: 6px; color: var(--secondary-text-color); }
         </style>
@@ -287,11 +326,15 @@ class DoorbellCameraCard extends HTMLElement {
 
     const btn = this.querySelector("[data-action='log']");
     if (btn) btn.addEventListener("click", () => this._openLog());
+    this.querySelectorAll("[data-img]").forEach((el) =>
+      el.addEventListener("click", () => this._openLog(Number(el.dataset.img)))
+    );
     if (this._log) this._renderLog();
   }
 
-  _openLog() {
+  _openLog(imageTs) {
     this._closeLog();
+    this._viewImage = imageTs || null;
     const log = document.createElement("div");
     log.style.cssText =
       "position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.5);" +
@@ -310,6 +353,10 @@ class DoorbellCameraCard extends HTMLElement {
 
   _renderLog() {
     if (!this._log) return;
+    if (this._viewImage) {
+      this._renderImage();
+      return;
+    }
     const period = PERIODS.find((p) => p.key === this._period) || PERIODS[0];
     const from = Date.now() - period.days * 86400000;
     const list = this._presses.filter((ts) => ts >= from).reverse();
@@ -335,8 +382,12 @@ class DoorbellCameraCard extends HTMLElement {
         .dcl .tab.active { background: var(--primary-color, #03a9f4); color: var(--text-primary-color, #fff); }
         .dcl .sum { color: var(--secondary-text-color, #666); font-size: 0.9em; margin-bottom: 4px; }
         .dcl ul { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
-        .dcl li { display: flex; justify-content: space-between; padding: 4px 0;
+        .dcl li { display: flex; align-items: center; gap: 8px; padding: 4px 0;
           border-bottom: 1px solid var(--divider-color, #ddd); font-size: 0.9em; }
+        .dcl li .d { flex: 1; }
+        .dcl .cam { width: 24px; height: 24px; background: none; border: none; padding: 0;
+          cursor: pointer; line-height: 0; color: var(--primary-color, #03a9f4); }
+        .dcl .cam ha-icon { --mdc-icon-size: 20px; }
         .dcl li:last-child { border-bottom: none; }
       </style>
       <div class="dcl">
@@ -361,6 +412,67 @@ class DoorbellCameraCard extends HTMLElement {
         this._renderLog();
       })
     );
+    this._log.querySelectorAll("[data-img]").forEach((el) =>
+      el.addEventListener("click", () => {
+        this._viewImage = Number(el.dataset.img);
+        this._renderLog();
+      })
+    );
+  }
+
+  _renderImage() {
+    const ts = this._viewImage;
+    const f = this._fmt(ts, true);
+    this._log.innerHTML = `
+      <style>
+        .dci { background: var(--card-background-color, #fff); color: var(--primary-text-color, #000);
+          border-radius: 12px; width: min(900px, 94vw); max-height: 90vh; display: flex;
+          flex-direction: column; padding: 12px 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
+        .dci .top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+        .dci .top b { flex: 1; text-align: center; }
+        .dci button { background: none; border: none; cursor: pointer; color: inherit; font: inherit; }
+        .dci .x { font-size: 1.4em; line-height: 1; }
+        .dci .back { color: var(--primary-color, #03a9f4); }
+        .dci .img { display: flex; align-items: center; justify-content: center; min-height: 200px; }
+        .dci img { max-width: 100%; max-height: 75vh; object-fit: contain; border-radius: 6px; }
+        .dci .msg { color: var(--secondary-text-color, #666); }
+      </style>
+      <div class="dci">
+        <div class="top">
+          <button class="back" data-action="back">&lsaquo; Protokoll</button>
+          <b>${this._esc(f.date)} ${this._esc(f.time)} Uhr</b>
+          <button class="x" data-action="close" title="Schließen">&times;</button>
+        </div>
+        <div class="img"><span class="msg">Bild wird geladen</span></div>
+      </div>`;
+    this._log.querySelector("[data-action='close']").addEventListener("click", () => this._closeLog());
+    this._log.querySelector("[data-action='back']").addEventListener("click", () => {
+      this._viewImage = null;
+      this._renderLog();
+    });
+    this._loadImage(ts);
+  }
+
+  async _loadImage(ts) {
+    const box = this._log && this._log.querySelector(".img");
+    try {
+      // Bilder liegen geschützt in der Integration, Abruf nur mit kurzlebiger Signatur
+      const res = await this._hass.callWS({
+        type: "auth/sign_path",
+        path: `/api/lutarym_event_snapshot_recorder/image/${this._entryId}/${ts}.jpg`,
+        expires: 60,
+      });
+      if (!this._log || this._viewImage !== ts || !box) return;
+      const img = document.createElement("img");
+      img.alt = "Kamerabild";
+      img.onload = () => box.replaceChildren(img);
+      img.onerror = () => {
+        box.innerHTML = `<span class="msg">Bild nicht mehr vorhanden.</span>`;
+      };
+      img.src = this._hass.hassUrl(res.path);
+    } catch (err) {
+      if (box) box.innerHTML = `<span class="msg">Bild konnte nicht geladen werden.</span>`;
+    }
   }
 
   _closeLog() {
@@ -372,6 +484,7 @@ class DoorbellCameraCard extends HTMLElement {
       this._log.remove();
       this._log = null;
     }
+    this._viewImage = null;
   }
 
   getCardSize() {

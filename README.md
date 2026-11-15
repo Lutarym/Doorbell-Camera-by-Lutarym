@@ -11,7 +11,13 @@ A Lovelace card for Home Assistant that counts doorbell presses and shows a came
 - Opens the camera image in fullscreen when the doorbell rings
 - Display duration of the camera image is configurable
 - Click on the camera image to close it
+- Card name can be changed
+- Snapshots of every press with timestamp in the history popup (requires the integration below)
 - Full configuration in the visual card editor
+
+## Snapshots
+
+To store a camera snapshot of every press, install the integration [Event Snapshot Recorder by Lutarym](https://github.com/YOUR_GITHUB_USER/event-snapshot-recorder-by-lutarym) and set it up for the same doorbell entity. The card detects it automatically. With the integration the history is also kept for one year, independent of the recorder settings.
 
 ## Installation
 
@@ -35,6 +41,7 @@ Add the card to your dashboard and pick **Doorbell Camera Card by Lutarym**. All
 
 | Option          | Required | Default | Description                                  |
 | --------------- | -------- | ------- | -------------------------------------------- |
+| `name`          | no       | `Doorbell Camera Card by Lutarym` | Name shown on the card |
 | `entity`        | yes      |         | Doorbell entity (`binary_sensor` or `event`) |
 | `camera_entity` | no       |         | Camera entity shown in fullscreen            |
 | `duration`      | no       | `30`    | Display time of the camera image in seconds  |
@@ -43,6 +50,7 @@ Add the card to your dashboard and pick **Doorbell Camera Card by Lutarym**. All
 
 ```yaml
 type: custom:doorbell-camera-card-by-lutarym
+name: Doorbell Camera Card by Lutarym
 entity: binary_sensor.doorbell
 camera_entity: camera.front_door
 duration: 30
@@ -54,4 +62,4 @@ duration: 30
 - For `event` entities, every new event counts as a press.
 - The fullscreen camera image only appears on devices where the dashboard with this card is currently open.
 - Presses are loaded from the Home Assistant history of up to 365 days.
-- By default the recorder keeps only 10 days of history. To see a full month or year, raise `purge_keep_days` in the recorder configuration.
+- Without the integration, presses come from the recorder history. By default the recorder keeps only 10 days of history. To see a full month or year, raise `purge_keep_days` in the recorder configuration.
