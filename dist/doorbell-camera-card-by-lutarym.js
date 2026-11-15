@@ -150,8 +150,9 @@ class DoorbellCameraCard extends HTMLElement {
   }
 
   async _loadHistory(id) {
-    // Mit installierter Integration kommen Protokoll und Bilder von dort
-    if (await this._loadIntegration(id)) return;
+    // Integration liefert Bilder und Zeiten ab ihrer Installation,
+    // der Recorder Verlauf ergänzt die Zeiten davor
+    await this._loadIntegration(id);
     try {
       const start = new Date(Date.now() - HISTORY_DAYS * 86400000);
       const res = await this._hass.callWS({
